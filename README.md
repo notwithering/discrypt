@@ -43,6 +43,6 @@ go build .
 
 #### Windows
 
-```bash
-./main.exe
+```powershell
+.\main.exe
 ```
