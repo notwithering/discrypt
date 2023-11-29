@@ -1,187 +1,263 @@
 package main
 
 import (
+	"api"
+	"encoding/json"
 	"fmt"
-	"os"
+	"math"
 	"strings"
 	"time"
 
+	"github.com/bwmarrin/discordgo"
 	ui "github.com/gizak/termui/v3"
 	"github.com/gizak/termui/v3/widgets"
-
-	"main/backend"
-	discrypt "main/midend"
-
 	"github.com/nathan-fiscaletti/consolesize-go"
 )
 
-const (
-	token string = "MTEyNjc0NDg5OTk5NjM1NjYzOA.Gq8B7Q.3LIzrStmAxiBOJJwSZsuETw-YUgzU5uZnIq2mc"
-)
-
-var (
-	exit bool = false
-
-	nickname      string = "NoNickname"
-	encryptionKey string = "ThisKeyIs16Bytes"
-	room          string = "DisCrypt"
-
-	termCols, termLines = consolesize.GetConsoleSize()
-
-	chatPane  *widgets.Paragraph = widgets.NewParagraph()
-	inputPane *widgets.Paragraph = widgets.NewParagraph()
-	debugPane *widgets.Paragraph = widgets.NewParagraph()
-	infoPane  *widgets.Paragraph = widgets.NewParagraph()
-
-	uiEvents <-chan ui.Event = ui.PollEvents()
-
-	messagesGot int = 0
-
-	channels = make(map[string]string)
-)
-
 func main() {
-	channels["rooms"] = "1127831380567523408"
-	channels["messaging"] = "1127831380567523408"
-
-	chatPane.Title = "Chat"
-	inputPane.Title = "Message"
-	debugPane.Title = "Debugging"
-	infoPane.Title = "Info"
-
+	// Tui Init
 	if err := ui.Init(); err != nil {
-		fmt.Printf("Failed to initialize termui: %v", err)
-		os.Exit(11)
+		fmt.Println(errorPrefix, err)
+		return
 	}
 	defer ui.Close()
 
-	messages, err := backend.GetMessages(token, channels["messaging"])
+	/* Bot */
+	dg, err := discordgo.New("Bot " + Config.Token)
 	if err != nil {
-		chatPane.Text += "Error while getting messages: " + err.Error() + "\n"
+		fmt.Println(errorPrefix, err)
 		return
 	}
-	if len(messages) > 0 {
-		messagesGot = len(messages) - 1
+
+	dg.Identify.Intents = discordgo.IntentsGuildMessages
+	if err := dg.Open(); err != nil {
+		fmt.Println(errorPrefix, err)
+		return
 	}
 
-	go func() {
-		for {
-			for encryptionKey == "" {
-				time.Sleep(time.Millisecond * 10)
+	dg.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+		content, err := api.Decrypt(m.Content, status.Key)
+		if err != nil {
+			if p, ok := panes["input"]; ok {
+				p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
+				panes["input"] = p
 			}
-			time.Sleep(time.Millisecond * 2500)
-			messages, err := backend.GetMessages(token, channels["messaging"])
-			if err != nil {
-				chatPane.Text += "Error while getting messages: " + err.Error() + "\n"
+			return
+		}
+
+		var obj api.ConstantObject
+		if err := json.Unmarshal([]byte(content), &obj); err != nil {
+			if p, ok := panes["input"]; ok {
+				p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
+				panes["input"] = p
+			}
+			return
+		}
+		switch obj.Type {
+		case api.ObjectMessageType:
+			var message api.MessageObject
+			if err := json.Unmarshal([]byte(content), &message); err != nil {
+				if p, ok := panes["input"]; ok {
+					p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
+					panes["input"] = p
+				}
 				return
 			}
 
-			for i := len(messages) - messagesGot - 1; i >= 0; i -= 1 {
-				message := messages[i]
-				content, ok := message["content"].(string)
-				if !ok {
-					chatPane.Text += "Error while getting message content\n"
-					continue
-				}
-
-				decrypted, err := backend.Decrypt(content, encryptionKey)
-				if err != nil {
-					chatPane.Text += "Error while decryptiing text: " + err.Error()
-				} else if decrypted, ok := strings.CutPrefix(decrypted, room+"␞"); ok {
-					chatPane.Text += decrypted + "\n"
-				}
-				messagesGot += 1
-				var chatPaneHeight int = termLines - 7
-				chatLines := strings.Split(chatPane.Text, "\n")
-				for {
-					if len(chatLines) > chatPaneHeight {
-						chatText, ok := strings.CutPrefix(chatPane.Text, chatLines[0]+"\n")
-						if !ok {
-							chatPane.Text = ""
-						} else {
-							chatPane.Text = chatText
-						}
-						chatLines = strings.Split(chatPane.Text, "\n")
-					} else {
-						break
-					}
-				}
-				debugPane.Text = "Lines:" + fmt.Sprint(len(chatLines)) + "\nHeight:" + fmt.Sprint(chatPaneHeight)
+			if message.Room != status.Room {
+				return
 			}
 
-			if messagesGot > len(messages) {
-				messagesGot = len(messages)
+			if p, ok := panes["chat"]; ok {
+				p.Text = fmt.Sprintf("%s: %s\n", message.Author, message.Content)
+				panes["chat"] = p
+			}
+		}
+	})
+	/* */
+
+	/* Panes */
+	panes["info"] = pane{Pane: widgets.NewParagraph()}
+	panes["info"].Pane.Title = "Info"
+	panes["chat"] = pane{Pane: widgets.NewParagraph()}
+	panes["chat"].Pane.Title = "Chat"
+	panes["input"] = pane{Pane: widgets.NewParagraph()}
+	panes["input"].Pane.Title = "Message"
+
+	renderOrder = append(renderOrder, panes["chat"].Pane)
+	renderOrder = append(renderOrder, panes["info"].Pane)
+	renderOrder = append(renderOrder, panes["input"].Pane)
+	/* */
+
+	/* Tui loop */
+	var exit bool
+	go func() {
+		var uiEvents <-chan ui.Event = ui.PollEvents()
+		for !exit {
+			e := <-uiEvents
+			if e.Type == ui.KeyboardEvent {
+				switch e.ID {
+				case "<Space>":
+					if p, ok := panes["input"]; ok {
+						p.Text += " "
+						panes["input"] = p
+					}
+				case "<Backspace>":
+					if len(panes["input"].Text) != 0 {
+						if p, ok := panes["input"]; ok {
+							p.Text = p.Text[:len(p.Text)-1]
+							panes["input"] = p
+						}
+					}
+				case "<Enter>":
+					var contentBuffer string = panes["input"].Text
+					if p, ok := panes["input"]; ok {
+						p.Text = ""
+						panes["input"] = p
+					}
+					contentBuffer = strings.TrimSpace(contentBuffer)
+
+					if strings.HasPrefix(contentBuffer, "/") {
+						switch strings.Split(contentBuffer, " ")[0] {
+						case "/nick", "/nickname":
+							status.Nickname = func() string {
+								var n string
+								n = strings.TrimPrefix(contentBuffer, "/nickname ")
+								if n != contentBuffer {
+									return n
+								}
+								n = strings.TrimPrefix(contentBuffer, "/nick ")
+								return n
+							}()
+						case "/room":
+							status.Room = strings.TrimPrefix(contentBuffer, "/room ")
+						case "/key":
+							status.DisplayKey = strings.TrimPrefix(contentBuffer, "/key ")
+							status.Key = api.DetermineKey(status.DisplayKey)
+						}
+						continue
+					}
+
+					if contentBuffer == "" {
+						continue
+					}
+
+					buf, err := json.Marshal(api.MessageObject{
+						Room:    status.Room,
+						Content: contentBuffer,
+						Author:  status.Nickname,
+					})
+					if err != nil {
+						if p, ok := panes["input"]; ok {
+							p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
+							panes["input"] = p
+						}
+						continue
+					}
+
+					encrypted, err := api.Encrypt(string(buf), status.Key)
+					if err != nil {
+						if p, ok := panes["input"]; ok {
+							p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
+							panes["input"] = p
+						}
+						continue
+					}
+
+					if _, err := dg.ChannelMessageSend(Config.Channels.Messaging, encrypted); err != nil {
+						if p, ok := panes["input"]; ok {
+							p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
+							panes["input"] = p
+						}
+						continue
+					}
+				case "<Escape>":
+					exit = true
+				default:
+					if len(e.ID) == 1 {
+						if p, ok := panes["input"]; ok {
+							p.Text += e.ID
+							panes["input"] = p
+						}
+					}
+				}
 			}
 		}
 	}()
+	var cycles uint64
+	for !exit {
+		time.Sleep(time.Second / time.Duration(Config.Client.FPS))
 
-	for {
-		time.Sleep(time.Microsecond * 16666) // ~60 fps
-		go update()
-		if exit {
-			break
+		var width, height int = consolesize.GetConsoleSize()
+
+		var inputHeightOffset int
+		if width-21 != 0 {
+			inputHeightOffset = len(panes["input"].Text) / (width - 21)
+		}
+
+		for _, p := range panes {
+			p.Pane.Text = p.Text
+		}
+
+		if p, ok := panes["info"]; ok {
+			p.Pane.SetRect(0, 0, width, 3)
+			p.Text = fmt.Sprintf("Nickname:%s | Room:%s | Key:%s", status.Nickname, status.Room, status.DisplayKey)
+			panes["info"] = p
+		}
+		if p, ok := panes["chat"]; ok {
+			p.Pane.SetRect(0, 2, width, height-2)
+		}
+		if p, ok := panes["input"]; ok {
+			p.Pane.SetRect(0, height-3-inputHeightOffset, width, height)
+			if int(cycles)%int(Config.Client.FPS) < int(Config.Client.FPS/2) {
+				p.Pane.Text = p.Text + "|"
+			} else {
+				p.Pane.Text = p.Text
+			}
+			panes["input"] = p
+		}
+
+		ui.Clear()
+		ui.Render(renderOrder...)
+
+		if cycles < math.MaxUint64 {
+			cycles++
+		} else {
+			cycles = 0
 		}
 	}
+	/* */
 }
 
-func update() {
-	termCols, termLines = consolesize.GetConsoleSize()
+var (
+	panes       = make(map[string]pane)
+	renderOrder []ui.Drawable
 
-	chatPane.SetRect(0, 3, termCols-13, termLines-3)
-	inputPane.SetRect(0, termLines-3, termCols-13, termLines)
-	debugPane.SetRect(termCols-13, 3, termCols, termLines)
-	infoPane.SetRect(0, 0, termCols, 3)
+	status statusStruct
+)
 
-	infoPane.Text = fmt.Sprintf("Room:%s | Nickname:%s | Key:%s", room, nickname, encryptionKey)
+type pane struct {
+	Text string
+	Pane *widgets.Paragraph
+}
+type statusStruct struct {
+	Nickname   string
+	Room       string
+	DisplayKey string
+	Key        string
+}
 
-	go func() {
-		e := <-uiEvents
-		if e.Type == ui.KeyboardEvent {
-			switch e.ID {
-			case "<Escape>":
-				exit = true
-			case "<Backspace>":
-				if inputPane.Text != "" {
-					inputPane.Text = inputPane.Text[:len(inputPane.Text)-1]
-				}
-			case "<C-<Backspace>>":
-				if inputPane.Text != "" {
-					inputPane.Text = inputPane.Text[:len(inputPane.Text)-1]
-				}
-			case "<Space>":
-				inputPane.Text += " "
-			case "<Enter>":
-				var message string = inputPane.Text
-				inputPane.Text = ""
-				if message == "/clear" {
-					chatPane.Text = ""
-				} else if strings.HasPrefix(message, "/room ") {
-					room, _ = strings.CutPrefix(message, "/room ")
-				} else if strings.HasPrefix(message, "/nickname ") {
-					nickname, _ = strings.CutPrefix(message, "/nickname ")
-				} else if strings.HasPrefix(message, "/key ") {
-					setEncryptionKey, _ := strings.CutPrefix(message, "/key ")
-					if len(setEncryptionKey) != 4 && len(setEncryptionKey) != 8 && len(setEncryptionKey) != 16 && len(setEncryptionKey) != 32 {
-						inputPane.Text = "Encryption key must be 4, 8, 16, or 32 bytes in size."
-					} else {
-						encryptionKey = setEncryptionKey
-					}
-				} else if room != "" {
-					if encryptionKey != "" {
-						inputPane.Text = ""
-						discrypt.SendMessage(token, channels["messaging"], room+"␞"+nickname+": "+message, encryptionKey)
-					} else {
-						inputPane.Text = "Set an encryption key using /key <encryption key>"
-					}
-				} else {
-					inputPane.Text = "Join a room first! type /room <roomname>"
-				}
-			default:
-				inputPane.Text += e.ID
-			}
-		}
-	}()
+const (
+	debugPrefix   string = "\033[0;33m[DEBUG]\033[0m"
+	errorPrefix   string = "\033[0;91m[ERROR]\033[0m"
+	warningPrefix string = "\033[0;93m[WARNING]\033[0m"
+)
 
-	ui.Clear()
-	ui.Render(chatPane, inputPane, debugPane, infoPane)
+func init() {
+	status = statusStruct{
+		Nickname:   "NoNickname",
+		Room:       "DisCrypt",
+		DisplayKey: "MyPrivateKey",
+		Key:        api.DetermineKey("MyPrivateKey"),
+	}
 }
