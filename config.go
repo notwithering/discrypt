@@ -5,7 +5,7 @@ var Config = struct {
 	Channels channels
 	Client   client
 }{
-	Token: "YOUR_TOKEN_HERE",
+	Token: "MTEyNjc0NDg5OTk5NjM1NjYzOA.GRE7AZ.J-oHnoeINmGrGUYwW-GOXLbNGSdE2TLPhBWl3k",
 	Channels: channels{
 		Messaging: "1127831380567523408",
 	},
