@@ -1,7 +1,6 @@
 package main
 
 import (
-	"api"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -36,7 +35,7 @@ func main() {
 	}
 
 	dg.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		content, err := api.Decrypt(m.Content, status.Key)
+		content, err := Decrypt(m.Content, status.Key)
 		if err != nil {
 			if p, ok := panes["input"]; ok {
 				p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
@@ -45,7 +44,7 @@ func main() {
 			return
 		}
 
-		var obj api.ConstantObject
+		var obj ConstantObject
 		if err := json.Unmarshal([]byte(content), &obj); err != nil {
 			if p, ok := panes["input"]; ok {
 				p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
@@ -54,8 +53,8 @@ func main() {
 			return
 		}
 		switch obj.Type {
-		case api.ObjectMessageType:
-			var message api.MessageObject
+		case ObjectMessageType:
+			var message MessageObject
 			if err := json.Unmarshal([]byte(content), &message); err != nil {
 				if p, ok := panes["input"]; ok {
 					p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
@@ -133,7 +132,7 @@ func main() {
 							status.Room = strings.TrimPrefix(contentBuffer, "/room ")
 						case "/key":
 							status.DisplayKey = strings.TrimPrefix(contentBuffer, "/key ")
-							status.Key = api.DetermineKey(status.DisplayKey)
+							status.Key = DetermineKey(status.DisplayKey)
 						}
 						continue
 					}
@@ -142,7 +141,7 @@ func main() {
 						continue
 					}
 
-					buf, err := json.Marshal(api.MessageObject{
+					buf, err := json.Marshal(MessageObject{
 						Room:    status.Room,
 						Content: contentBuffer,
 						Author:  status.Nickname,
@@ -155,7 +154,7 @@ func main() {
 						continue
 					}
 
-					encrypted, err := api.Encrypt(string(buf), status.Key)
+					encrypted, err := Encrypt(string(buf), status.Key)
 					if err != nil {
 						if p, ok := panes["input"]; ok {
 							p.Text = fmt.Sprintf("%s %s", errorPrefix, err)
@@ -258,6 +257,6 @@ func init() {
 		Nickname:   "NoNickname",
 		Room:       "DisCrypt",
 		DisplayKey: "MyPrivateKey",
-		Key:        api.DetermineKey("MyPrivateKey"),
+		Key:        DetermineKey("MyPrivateKey"),
 	}
 }
