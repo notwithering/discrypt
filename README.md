@@ -17,17 +17,32 @@ If you have a fix or want to implement a feature, make a pull request!
 - [Installation](#installation)
     - [Building from source](#building-from-source)
     - [Running](#running)
+        - [Linux](#linux)
+        - [Windows](#windows)
 
 ## Installation
 
 ### Building from source
 
 ```bash
-go install github.com/notwithering/discrypt@latest
+git clone https://github.com/notwithering/discrypted
+cd discrypted
+```
+
+```bash
+go build .
 ```
 
 ### Running
 
+#### Linux
+
 ```bash
-discrypt
+./discrypt
+```
+
+#### Windows
+
+```powershell
+.\discrypt.exe
 ```
