@@ -1,4 +1,4 @@
-module main
+module github.com/notwithering/discrypt
 
 go 1.21.0
 
